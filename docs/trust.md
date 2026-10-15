@@ -182,6 +182,10 @@ generic-instantiated.
 - **Assumption:** these facts are *no stronger than* Verus's own
   `has_type` axioms for the same type — Verus assumes exactly the same
   about every well-typed value.
+- `char` is the exception to recursive propagation: a direct `char`
+  binder carries the Unicode-scalar fact, but container and datatype
+  projections do not. Differential c195 pins Verus's behavior for
+  `Seq<char>` indexing so this backend cannot silently strengthen it.
 - Datatype field facts are emitted **unguarded** (no `is_variant`
   condition). Sound because a wrong-variant accessor returns `default`,
   and every emitted fact holds of `default`: integer defaults are `0`

@@ -123,6 +123,8 @@ partial def Expr.constructivelyDecidable
     | _ => true
   -- Variant predicates have generated `Decidable` instances.
   | .isVariant .. => true
+  -- Unicode scalar membership is a finite disjunction of integer comparisons.
+  | .charRange _ => true
   -- Other predicate-producing applications need evidence unless a producer
   -- can establish their class dictionaries structurally.
   | _ => false
@@ -146,7 +148,8 @@ partial def Expr.needsDecidableEvidence
     lhs.needsDecidableEvidence propVariables ||
       rhs.needsDecidableEvidence propVariables
   | .not value => value.needsDecidableEvidence propVariables
-  | .urange _ value | .srange _ value | .natClip value | .sclip _ value
+  | .urange _ value | .srange _ value | .charRange value
+  | .natClip value | .sclip _ value | .charClip value
   | .seqLen value
   | .seqToMultiset value | .fieldOf _ _ _ value | .isVariant _ _ value =>
     value.needsDecidableEvidence propVariables
@@ -405,7 +408,8 @@ partial def Expr.collectChoose : Expr → Array (Binder × Expr)
   | .binary _ lhs rhs => lhs.collectChoose ++ rhs.collectChoose
   | .not e => e.collectChoose
   | .ite c t f => c.collectChoose ++ t.collectChoose ++ f.collectChoose
-  | .urange _ e | .srange _ e | .natClip e | .sclip _ e => e.collectChoose
+  | .urange _ e | .srange _ e | .charRange e
+  | .natClip e | .sclip _ e | .charClip e => e.collectChoose
   | .seqLen e | .seqToMultiset e => e.collectChoose
   | .seqPush a b | .seqIndex a b | .seqNew a b | .seqAdd a b =>
     a.collectChoose ++ b.collectChoose

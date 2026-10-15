@@ -25,7 +25,8 @@ def leanReservedWords : List String :=
    "let", "fun", "match", "where", "calc", "at", "in",
    "open", "section", "namespace", "variable", "example", "theorem",
    "def", "deriving", "instance", "class", "structure", "inductive",
-   "abbrev", "axiom", "mutual", "macro", "notation", "attribute", "if"]
+   "abbrev", "axiom", "mutual", "macro", "notation", "attribute", "if",
+   "prefix"]
 
 /-- Sanitize one name segment into a valid Lean identifier chunk. -/
 def leanSegment (raw : String) : String :=
@@ -142,6 +143,8 @@ inductive Expr where
   | urange (bits : Nat) (e : Expr)
   /-- `Vermilion.inSignedRange bits e` -/
   | srange (bits : Nat) (e : Expr)
+  /-- `Vermilion.isUnicodeScalar e` -/
+  | charRange (e : Expr)
   /-- `Vermilion.natClip e` — Verus `nat` clipping (saturation at zero).
   Dedicated single-occurrence form: the conditional expansion
   `iteP (e ≥ 0) e 0` restates `e`, and nested nat arithmetic then grows
@@ -150,6 +153,9 @@ inductive Expr where
   /-- `Vermilion.sclip bits e` — signed two's-complement clipping at the
   given width; single-occurrence for the same reason as `natClip`. -/
   | sclip (bits : Nat) (e : Expr)
+  /-- `Vermilion.charClip e` — Verus's underspecified clipping to a Unicode
+  scalar value, represented by a kernel-checked choice. -/
+  | charClip (e : Expr)
   /-- `Vermilion.Seq.len s` -/
   | seqLen (s : Expr)
   /-- `Vermilion.Seq.push s x` -/

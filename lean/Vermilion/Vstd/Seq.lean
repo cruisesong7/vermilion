@@ -182,6 +182,21 @@ def subrange (xs : Seq α) (i j : Int) : Seq α :=
   simp only [subrange, List.length_take, List.length_drop]
   omega
 
+/-- A nonempty suffix selected within the sequence is strictly shorter.
+This is the common termination step for Verus scanners that recurse on
+`xs.subrange i xs.len` after proving `0 < i ≤ xs.len`. -/
+theorem len_subrange_suffix_lt (xs : Seq α) (i : Int)
+    (positive : 0 < i) (high : i ≤ xs.len) :
+    (xs.subrange i xs.len).len < xs.len := by
+  rw [len_subrange xs i xs.len (by omega) high (by omega)]
+  omega
+
+theorem len_subrange_suffix_toNat_lt (xs : Seq α) (i : Int)
+    (positive : 0 < i) (high : i ≤ xs.len) :
+    (xs.subrange i xs.len).len.toNat < xs.len.toNat := by
+  apply (Int.toNat_lt (len_nonneg (xs.subrange i xs.len))).2
+  exact len_subrange_suffix_lt xs i positive high
+
 /-- Reading position `k` of a subrange reads position `i + k` of the whole. -/
 @[simp] theorem index_subrange [Inhabited α] (xs : Seq α) (i j k : Int)
     (low : 0 ≤ i) (klow : 0 ≤ k) (khigh : k < j - i) :

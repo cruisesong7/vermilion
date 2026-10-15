@@ -433,7 +433,11 @@ def renderSpecFn (specFn : SpecFn) (forceClassical : Bool := false) :
       out := out ++ s!" ({leanSegment binder.name} : {binder.ty.render})"
     out := out ++ s!" : {specFn.ret.render}\n"
     return out
-  if (recursive && classical) || propDec then
+  -- Recursive bodies preserve Verus short-circuit conjunctions as
+  -- dependent `if`s. Their guards may contain opaque Prop-valued spec
+  -- calls, so make proposition decidability available while elaborating
+  -- every recursive definition.
+  if recursive || propDec then
     out := out ++ "open Classical in\n"
   let marker := if classical then "noncomputable def" else "def"
   out := out ++ s!"{marker} {specFn.id.qualified}"
@@ -487,6 +491,7 @@ def renderSpecFn (specFn : SpecFn) (forceClassical : Bool := false) :
     out := out ++
       "decreasing_by all_goals first | omega | (simp_all; omega) | \
 (simp_all; exact ⟨Int.emod_lt_of_pos _ (by omega), by omega⟩) | \
+(apply Vermilion.Seq.len_subrange_suffix_toNat_lt <;> aesop <;> omega) | \
 (simp_all [Vermilion.iteP]; split_ifs <;> omega) | simp_all\n"
   return out
 
