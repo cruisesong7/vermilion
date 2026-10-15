@@ -10,9 +10,19 @@ repository="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Prefer rustup's `cargo`/`rustc` proxies when they are installed. A package
 # manager's Rust earlier on PATH ignores Verus's pinned rust-toolchain.toml and
-# can compile against an incompatible rustc-private API.
+# can compile against an incompatible rustc-private API. Resolve symlinks first:
+# Homebrew links `rustup` into the same bin directory as its standalone Rust,
+# while the proxies live beside the real `rustup` binary.
 if rustup_bin="$(command -v rustup 2>/dev/null)"; then
-  export PATH="$(dirname "$rustup_bin"):$PATH"
+  rustup_dir="$(cd "$(dirname "$rustup_bin")" && pwd -P)"
+  while [[ -L "$rustup_dir/$(basename "$rustup_bin")" ]]; do
+    rustup_bin="$(readlink "$rustup_dir/$(basename "$rustup_bin")")"
+    [[ "$rustup_bin" == /* ]] || rustup_bin="$rustup_dir/$rustup_bin"
+    rustup_dir="$(cd "$(dirname "$rustup_bin")" && pwd -P)"
+  done
+  if [[ -x "$rustup_dir/cargo" ]]; then
+    export PATH="$rustup_dir:$PATH"
+  fi
 fi
 
 # Fast path: once a full setup has succeeded, later runs only need the link
