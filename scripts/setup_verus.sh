@@ -8,6 +8,13 @@ set -euo pipefail
 
 repository="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Prefer rustup's `cargo`/`rustc` proxies when they are installed. A package
+# manager's Rust earlier on PATH ignores Verus's pinned rust-toolchain.toml and
+# can compile against an incompatible rustc-private API.
+if rustup_bin="$(command -v rustup 2>/dev/null)"; then
+  export PATH="$(dirname "$rustup_bin"):$PATH"
+fi
+
 # Fast path: once a full setup has succeeded, later runs only need the link
 # to still be healthy. (Delete .vermilion/setup-verus-ok to force a recheck.)
 fast_stamp="$repository/.vermilion/setup-verus-ok"
