@@ -587,6 +587,19 @@ function activate(context) {
   const refusalMarksByFile = new Map();
   // Files whose displayed verdict predates their last edit.
   const staleFiles = new Set();
+  const hasVerusMacro = (document) => /verus!\s*\{/.test(document.getText());
+  const clearFileResults = (document) => {
+    const file = document.uri.fsPath;
+    diagnostics.delete(document.uri);
+    frontEndDiagnostics.delete(document.uri);
+    marksByFile.delete(file);
+    refusalMarksByFile.delete(file);
+    refusalsByFile.delete(file);
+    resultsByFile.delete(file);
+    staleFiles.delete(file);
+    paintEditors();
+    updateStatus();
+  };
   // Files currently under verification: file -> [{ start, end }] ranges.
   const verifying = new Map();
   let zigzagPhase = 0;
@@ -804,7 +817,9 @@ function activate(context) {
     // Results are surfaced only for files open in the editor (one file at
     // a time for now).
     const openFiles = new Set(
-      vscode.workspace.textDocuments.map((doc) => doc.uri.fsPath)
+      vscode.workspace.textDocuments
+        .filter((doc) => doc.languageId === 'rust' && hasVerusMacro(doc))
+        .map((doc) => doc.uri.fsPath)
     );
     diagnostics.clear();
     for (const [file, list] of byFile) {
@@ -812,6 +827,9 @@ function activate(context) {
     }
     for (const file of [...marksByFile.keys()]) {
       if (!openFiles.has(file)) marksByFile.delete(file);
+    }
+    for (const file of [...resultsByFile.keys()]) {
+      if (!openFiles.has(file)) resultsByFile.delete(file);
     }
     paintEditors();
     updateStatus();
@@ -1046,6 +1064,11 @@ function activate(context) {
     );
 
   const verify = (documentPath, document, opts = {}) => {
+    if (document.uri.scheme !== 'file') return true;
+    if (!hasVerusMacro(document)) {
+      clearFileResults(document);
+      return true;
+    }
     const directory = path.dirname(documentPath);
     // Pick the runner that actually verifies THIS file — a directory may hold
     // several runnable Rust files, each with its own run script. Falling back
@@ -1381,15 +1404,7 @@ function activate(context) {
       // the user asked for). `hasVerusMacro` is defined below; this closure
       // only runs on save, well after activation completes.
       if (!hasVerusMacro(document)) {
-        const file = document.uri.fsPath;
-        diagnostics.delete(document.uri);
-        frontEndDiagnostics.delete(document.uri);
-        marksByFile.delete(file);
-        refusalMarksByFile.delete(file);
-        refusalsByFile.delete(file);
-        resultsByFile.delete(file);
-        paintEditors();
-        updateStatus();
+        clearFileResults(document);
         return;
       }
       verify(document.uri.fsPath, document);
@@ -1400,7 +1415,6 @@ function activate(context) {
   // opened (user directive). Plain Rust files are left alone — opening them
   // should not spin up the pipeline. `verify`'s own inFlight guard makes a
   // redundant trigger a no-op.
-  const hasVerusMacro = (document) => /verus!\s*\{/.test(document.getText());
   // …but only when there is something new to learn: VSCode re-fires
   // onDidOpenTextDocument every time navigation revisits a closed document,
   // and each pipeline run costs a Verus front-end pass plus a Lean check
