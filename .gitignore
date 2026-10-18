@@ -20,6 +20,8 @@ examples/*/proofs/*
 !examples/m3-vec-set/proofs/vec_set/
 !examples/m2-forloop/proofs/forloop/
 !examples/m3-vec-pop/proofs/vec_pop/
+!examples/vermilion-blog/proofs/vermilion_blog/
+!examples/vermilion-blog/proofs/BlogSnippets.lean
 case-studies/*/generated/
 vstd/generated/
 .DS_Store

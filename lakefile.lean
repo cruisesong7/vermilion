@@ -292,6 +292,10 @@ lean_lib TestLoweringIsolation where
   srcDir := "tests/lowering_isolation/proofs"
   globs := proofGlobs (run_io discoverProofRoots "tests/lowering_isolation/proofs")
 
+lean_lib VermilionBlog where
+  srcDir := "examples/vermilion-blog/proofs"
+  globs := proofGlobs (run_io discoverProofRoots "examples/vermilion-blog/proofs")
+
 lean_lib CaseDalekLiteLayerA where
   srcDir := "case-studies/dalek-lite/proofs"
   globs := proofGlobs (run_io discoverProofRoots "case-studies/dalek-lite/proofs")
