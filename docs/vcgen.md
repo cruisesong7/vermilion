@@ -453,6 +453,12 @@ rules. The 2026-07-20 SHA3 fixes added no statement form, inference rule,
 axiom, or trusted arithmetic assumption; c170–c172 test the composition.
 
 The same rule is the target of two assertion-query lowering macros.
+Bit-vector assertion IDs are unique within each function, including across
+branches and nested scopes. The adapter keeps the existing `bv_<offset>_<index>`
+ID on its first occurrence and appends an occurrence number on later uses.
+Previously unique IDs and their statement hashes remain unchanged; colliding
+declarations receive distinct names and must be reconciled with their twins.
+
 `AssertBitVector` and `AssertQuery { mode: NonLinear }` become an
 empty-exit `loop` whose iteration facts are only accumulated type facts and
 whose body is the explicit query content. Thus the query cannot see the

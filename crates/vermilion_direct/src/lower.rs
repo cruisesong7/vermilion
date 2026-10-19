@@ -3373,6 +3373,9 @@ struct Lowering<'a> {
     type_facts: Vec<Expr>,
     /// Ordinal for asserts that carry no Verus `AssertId`.
     anonymous_ordinal: usize,
+    /// Block-local statement offsets can repeat across branches and scopes.
+    /// Count uses across the whole function, preserving existing unique ids.
+    bitvector_ids: HashMap<String, usize>,
     /// Enclosing loops, innermost last, for `break`/`continue` targets.
     loop_frames: Vec<LoopFrame>,
 }
@@ -5925,9 +5928,17 @@ impl Lowering<'_> {
                 for (index, conclusion) in ensures.iter().enumerate() {
                     let lowered = lower_exp(self.ctx, &self.env, conclusion)?;
                     let ordinal = self.statements.len();
+                    let base_id = format!("bv_{ordinal}_{index}");
+                    let occurrence = self.bitvector_ids.entry(base_id.clone()).or_default();
+                    let id = if *occurrence == 0 {
+                        base_id
+                    } else {
+                        format!("{base_id}_{occurrence}")
+                    };
+                    *occurrence += 1;
                     body.push(Statement::Assert(
                         Clause::new(
-                            format!("bv_{ordinal}_{index}"),
+                            id,
                             span(&conclusion.span),
                             lowered,
                         )
@@ -6018,6 +6029,7 @@ fn function_view_impl(
         var_types: HashMap::new(),
         type_facts: Vec::new(),
         anonymous_ordinal: 0,
+        bitvector_ids: HashMap::new(),
         loop_frames: Vec::new(),
     };
     let mut binders = Vec::new();
