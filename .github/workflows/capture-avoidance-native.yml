@@ -4,6 +4,17 @@ on:
   push:
     branches:
       - contrib/capture-avoidance-upstream-20261021
+  pull_request:
+    paths:
+      - "crates/vermilion_direct/**"
+      - "lean/Vermilion/**"
+      - "scripts/differential_*.py"
+      - "scripts/run_differential.py"
+      - "scripts/check_capture_goals.py"
+      - "tests/differential/**"
+      - "tests/test_capture_goal_guard.py"
+      - "tests/test_differential_outcomes.py"
+      - ".github/workflows/capture-avoidance-native.yml"
   workflow_dispatch:
 
 permissions:
@@ -60,6 +71,7 @@ jobs:
       - name: Run binder lowering unit tests
         run: |
           export PATH="$HOME/.cargo/bin:$HOME/.elan/bin:$PATH"
+          repository="$PWD"
           source scripts/verus_env.sh
           (cd crates/vermilion_direct && rustup run "$verus_toolchain" cargo test)
       - name: Validate every differential case and generated capture-sensitive statement
