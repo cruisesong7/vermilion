@@ -1653,7 +1653,7 @@ mod capture_avoiding_binder_tests {
             "x-y".to_owned(), "x_vrml_0".to_owned(),
         ]);
         assert_eq!(rendered_binder_segment("x-y"), "x_y");
-        assert_eq!(capture_avoiding_binder_name("x_y", &mut occupied), "x_y");
+        assert_eq!(capture_avoiding_binder_name("x_y", &mut occupied), "x_y_vrml_0");
         let mut occupied = HashSet::from(["x-y".to_owned()]);
         assert_eq!(capture_avoiding_binder_name("x_y", &mut occupied), "x_y_vrml_0");
         assert_eq!(rendered_binder_segment("2k"), "_2k");
