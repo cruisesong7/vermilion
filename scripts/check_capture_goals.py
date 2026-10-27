@@ -76,6 +76,43 @@ def inspect(root: Path) -> list[str]:
                 raise ValueError(f"noncapturing {quantifier} relation not found")
         except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
             errors.append(f"{stem}: {exc}")
+    # A Lean keyword is escaped by leanSegment (end -> end_). The
+    # source's distinct free variable end_ must not collapse into the
+    # quantified binder. This is an actual source-negative test, rather
+    # than a purely synthetic naming-unit test.
+    stem = "c_hygiene_07_keyword_escape"
+    function = "keyword_escape_capture"
+    try:
+        manifest = json.loads((root / "tests/differential/generated" / f"{stem}.json")
+                              .read_text(encoding="utf-8"))
+        if manifest.get("refused") or manifest.get("refusals"):
+            raise ValueError("unsupported lowering, not a proof result")
+        found = False
+        for rec in manifest["obligations"]:
+            if function not in str(rec.get("name", "")):
+                continue
+            name, statement_hash = rec["name"], rec["statement_hash"]
+            relative = obligation_file(manifest, rec)
+            file = (root / relative).resolve()
+            if not file.is_relative_to(root) or not file.is_file():
+                raise ValueError("missing or escaping Lean source")
+            content = file.read_text(encoding="utf-8")
+            match = re.search(
+                rf"(?ms)^-- vrml:begin {re.escape(name)} {re.escape(statement_hash)}\\s*$\\n"
+                rf"(.*?)^-- vrml:end {re.escape(name)}\\s*$",
+                content,
+            )
+            if match is None:
+                raise ValueError("keyword capture statement/hash binding missing")
+            body = match.group(1)
+            if (re.search(r"∀\\s*\\(end_vrml_\\d+\\s*:\\s*Int\\)", body)
+                    and re.search(r"end_vrml_\\d+\\s*<\\s*end_\\b", body)):
+                found = True
+                break
+        if not found:
+            raise ValueError("noncapturing Lean keyword-escaped quantifier not found")
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        errors.append(f"{stem}: {exc}")
     return errors
 
 if __name__ == "__main__":
