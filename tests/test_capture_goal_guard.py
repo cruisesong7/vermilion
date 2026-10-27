@@ -42,11 +42,11 @@ def fixture(root, mode, *, sabotage=None):
     body = 'end_vrml_0 < end_'
     if sabotage == 'keyword_captured':
         body = 'end_ < end_'
-    source = (f'-- vrml:begin {record_name} {digest}\\n'
+    source = (f'-- vrml:begin {record_name} {digest}\n'
               f'theorem ensures_0 (end_ : Int) : '
-              f'(∀ (end_vrml_0 : Int), ({body})) := by\\n'
-              f'  sorry\\n'
-              f'-- vrml:end {record_name}\\n')
+              f'(∀ (end_vrml_0 : Int), ({body})) := by\n'
+              f'  sorry\n'
+              f'-- vrml:end {record_name}\n')
     target = root / lean_path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source, encoding='utf-8')
