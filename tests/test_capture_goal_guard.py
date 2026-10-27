@@ -31,6 +31,33 @@ def fixture(root, mode, *, sabotage=None):
                     "lean_file": lean_path if mode == "per-file" else f"tests/differential/generated/{stem}"}
         path = root / 'tests/differential/generated' / f'{stem}.json'
         path.write_text(json.dumps(manifest), encoding='utf-8')
+    # Adversarial keyword-escape case: end and end_ are distinct in Rust,
+    # while Lean's identifier rendering maps end to end_.
+    stem, fn = 'c_hygiene_07_keyword_escape', 'keyword_escape_capture'
+    record_name = f'{stem}.{fn}.ensures_0'
+    digest = f'h_{stem}'
+    lean_path = (f'tests/differential/generated/{stem}.lean'
+                 if mode == 'per-file'
+                 else f'tests/differential/generated/{stem}/{fn}.lean')
+    body = 'end_vrml_0 < end_'
+    if sabotage == 'keyword_captured':
+        body = 'end_ < end_'
+    source = (f'-- vrml:begin {record_name} {digest}\\n'
+              f'theorem ensures_0 (end_ : Int) : '
+              f'(∀ (end_vrml_0 : Int), ({body})) := by\\n'
+              f'  sorry\\n'
+              f'-- vrml:end {record_name}\\n')
+    target = root / lean_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source, encoding='utf-8')
+    rec = {'name': record_name, 'statement_hash': digest}
+    if mode == 'per-function':
+        rec['lean_file'] = lean_path
+    manifest = {'mode': mode, 'obligations': [rec], 'refused': [],
+                'lean_file': (lean_path if mode == 'per-file'
+                              else f'tests/differential/generated/{stem}')}
+    (root / 'tests/differential/generated' / f'{stem}.json').write_text(
+        json.dumps(manifest), encoding='utf-8')
 
 
 class InspectTests(unittest.TestCase):
@@ -43,6 +70,11 @@ class InspectTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             fixture(Path(t), 'per-function')
             self.assertEqual(inspect(Path(t)), [])
+
+    def test_keyword_escape_self_capture_rejected(self):
+        with tempfile.TemporaryDirectory() as t:
+            fixture(Path(t), 'per-function', sabotage='keyword_captured')
+            self.assertTrue(any('keyword-escaped' in e for e in inspect(Path(t))))
 
     def test_self_captured_statement_rejected(self):
         with tempfile.TemporaryDirectory() as t:
