@@ -200,6 +200,20 @@ Rust-`bool` parameter used as a guard counts too) is instead rendered under
 in the emitted text; constructively-decidable guards keep their
 definitions computable exactly as before.
 
+A **recursive** body also renders Verus's short-circuit `a && b` as the
+dependent `if _h : a then b else False` (propositionally `a ∧ b`), so the
+equation compiler sees `a` while checking recursive calls in `b` (a recursive
+scanner guarding its next call with an index bound). That `if` needs
+`Decidable a`. When `a` is not constructively decidable by the same
+recognizer (`Expr.needsDecidableEvidence` with `andGuards`), the definition is
+rendered under `open Classical in` too (`SpecFn.needsAndGuardDecidable`). It
+does not go `noncomputable`: the conjunction is a Prop, which the compiler
+erases, and an `iteP` branching on it is already caught by
+`needsPropDecidable`. A recursive definition that is `noncomputable` for
+another reason (a choice, a possibly-zero division) is also rendered under
+`open Classical in`, as before; any other recursive definition whose `&&`
+guards are all constructively decidable gets no classical instance.
+
 Evidence is emitted **after spec-function definitions** and before logical
 VCs. In the per-file layout it sits inside a section as a flattened,
 project-unique `noncomputable local instance`: available to every later

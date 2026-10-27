@@ -355,6 +355,18 @@ def SpecFn.needsPropDecidable (specFn : SpecFn) : Bool :=
     if binder.ty == .prop then binder.name :: names else names) []
   specFn.body.needsDecidableEvidence propVariables
 
+/-- Does this recursive spec fn's body contain a short-circuit `a && b` whose
+guard `a` is not constructively decidable? Recursive bodies render it as the
+dependent `if _h : a then b else False`, which needs `Decidable a`, so such a
+definition is rendered under `open Classical in`. It does not go
+`noncomputable`: the conjunction is a Prop, erased by the compiler, and an
+`iteP` that branches on it is already caught by `needsPropDecidable`. -/
+def SpecFn.needsAndGuardDecidable (specFn : SpecFn) : Bool :=
+  let propVariables := specFn.binders.foldl (fun names binder =>
+    if binder.ty == .prop then binder.name :: names else names) []
+  specFn.isRecursive &&
+    specFn.body.needsDecidableEvidence propVariables (andGuards := true)
+
 /-- The qualified names of the spec fns whose emitted definitions must be
 `noncomputable`: uninterpreted ones (rendered `opaque`), bodies that are
 classical themselves (`chooseSpec`, possibly-zero `ediv`/`emod`), and —
@@ -404,11 +416,15 @@ def renderSpecFn (specFn : SpecFn) (forceClassical : Bool := false) :
   -- `iteP (is_negative a) …`) additionally needs the classical fallback
   -- instance in scope: `open Classical in` before the definition, and the
   -- definition goes `noncomputable`. Recursive definitions render
-  -- their conditionals dependently (`if _h : c then …`) so the equation
-  -- compiler sees the branch hypotheses in the termination goals, with
-  -- `termination_by` from the Verus-checked decreases measures.
+  -- their conditionals and short-circuit `&&` dependently
+  -- (`if _h : c then …`) so the equation compiler sees the branch
+  -- hypotheses in the termination goals, with `termination_by` from the
+  -- Verus-checked decreases measures. A `&&` guard that `Decidable`
+  -- synthesis cannot see through gets `open Classical in` as well, without
+  -- the definition becoming `noncomputable` (`needsAndGuardDecidable`).
   let recursive := specFn.isRecursive
   let propDec := specFn.needsPropDecidable
+  let andGuardDec := specFn.needsAndGuardDecidable
   let classical := specFn.body.needsClassical || forceClassical || propDec
   let mut out := ""
   -- Navigation marker: the editor's Lean→Rust jump (⌘⇧J) reads the
@@ -433,7 +449,11 @@ def renderSpecFn (specFn : SpecFn) (forceClassical : Bool := false) :
       out := out ++ s!" ({leanSegment binder.name} : {binder.ty.render})"
     out := out ++ s!" : {specFn.ret.render}\n"
     return out
-  if (recursive && classical) || propDec then
+  -- Only classical recursive definitions and definitions with a guard
+  -- `Decidable` synthesis cannot see through get the classical instance in
+  -- scope; every other definition elaborates with constructive instances
+  -- alone (#25).
+  if (recursive && classical) || propDec || andGuardDec then
     out := out ++ "open Classical in\n"
   let marker := if classical then "noncomputable def" else "def"
   out := out ++ s!"{marker} {specFn.id.qualified}"
@@ -487,6 +507,8 @@ def renderSpecFn (specFn : SpecFn) (forceClassical : Bool := false) :
     out := out ++
       "decreasing_by all_goals first | omega | (simp_all; omega) | \
 (simp_all; exact ⟨Int.emod_lt_of_pos _ (by omega), by omega⟩) | \
+(simp only [Vermilion.Seq.len, Vermilion.Seq.subrange, List.length_take, \
+List.length_drop] at *; omega) | \
 (simp_all [Vermilion.iteP]; split_ifs <;> omega) | simp_all\n"
   return out
 

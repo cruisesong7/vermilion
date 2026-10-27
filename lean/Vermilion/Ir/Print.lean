@@ -59,6 +59,15 @@ partial def Expr.renderD (dite : Bool) : Expr → String
     s!"(Vermilion.emod {lhs.renderAtomD dite} {rhs.renderAtomD dite})"
   | .binary .niff lhs rhs =>
     s!"({lhs.renderD dite} ↔ ¬ {rhs.renderD dite})"
+  | .binary .and lhs rhs =>
+    if dite then
+      -- Verus conjunction is short-circuiting. Preserve that control-flow
+      -- shape in recursive definitions so Lean's equation compiler sees
+      -- the left-hand guard while checking recursive calls in the right.
+      -- Propositionally this remains exactly `lhs ∧ rhs`.
+      s!"(if _h : {lhs.renderD dite} then {rhs.renderD dite} else False)"
+    else
+      s!"({lhs.renderD dite} ∧ {rhs.renderD dite})"
   | .binary op lhs rhs =>
     let symbol := (op.leanSymbol).getD "?"
     s!"({lhs.renderD dite} {symbol} {rhs.renderD dite})"
@@ -72,8 +81,10 @@ else {elseValue.renderD dite})"
 {elseValue.renderAtomD dite})"
   | .urange bits e => s!"Vermilion.inUnsignedRange {bits} {e.renderAtomD dite}"
   | .srange bits e => s!"Vermilion.inSignedRange {bits} {e.renderAtomD dite}"
+  | .charRange e => s!"Vermilion.isUnicodeScalar {e.renderAtomD dite}"
   | .natClip e => s!"Vermilion.natClip {e.renderAtomD dite}"
   | .sclip bits e => s!"Vermilion.sclip {bits} {e.renderAtomD dite}"
+  | .charClip e => s!"Vermilion.charClip {e.renderAtomD dite}"
   | .seqLen s => s!"Vermilion.Seq.len {s.renderAtomD dite}"
   | .seqPush s x => s!"Vermilion.Seq.push {s.renderAtomD dite} {x.renderAtomD dite}"
   | .seqIndex s i => s!"Vermilion.Seq.index {s.renderAtomD dite} {i.renderAtomD dite}"
@@ -158,7 +169,8 @@ partial def Expr.renderAtomD (dite : Bool) (e : Expr) : String :=
   | .seqEmpty _ | .setEmpty _ | .mapEmpty .. | .multisetEmpty _ => e.renderD dite
   | .int value => if value < 0 then e.renderD dite else s!"{value}"
   | .binary .. | .not _ | .ite .. => e.renderD dite
-  | .urange .. | .srange .. | .natClip _ | .sclip .. | .seqLen _
+  | .urange .. | .srange .. | .charRange _ | .natClip _ | .sclip ..
+  | .charClip _ | .seqLen _
   | .seqPush .. | .seqIndex ..
   | .seqUpdate .. | .seqSubrange .. | .seqAdd .. | .seqToMultiset ..
   | .seqNew .. | .bitOp .. | .coll .. =>
@@ -210,7 +222,9 @@ partial def Expr.needsClassical : Expr → Bool
   | .ite c t f => c.needsClassical || t.needsClassical || f.needsClassical
   | .binary _ lhs rhs => lhs.needsClassical || rhs.needsClassical
   | .not e => e.needsClassical
-  | .urange _ e | .srange _ e | .natClip e | .sclip _ e => e.needsClassical
+  | .charClip _ => true
+  | .urange _ e | .srange _ e | .charRange e | .natClip e | .sclip _ e =>
+    e.needsClassical
   | .seqLen e | .seqToMultiset e => e.needsClassical
   | .seqPush a b | .seqIndex a b | .seqNew a b | .seqAdd a b =>
     a.needsClassical || b.needsClassical
@@ -240,7 +254,8 @@ partial def Expr.applies : Expr → Array String
   | .binary _ lhs rhs => lhs.applies ++ rhs.applies
   | .not e => e.applies
   | .ite c t f => c.applies ++ t.applies ++ f.applies
-  | .urange _ e | .srange _ e | .natClip e | .sclip _ e => e.applies
+  | .urange _ e | .srange _ e | .charRange e | .natClip e | .sclip _ e
+  | .charClip e => e.applies
   | .seqLen e | .seqToMultiset e => e.applies
   | .seqPush a b | .seqIndex a b | .seqNew a b | .seqAdd a b => a.applies ++ b.applies
   | .seqUpdate a b c | .seqSubrange a b c => a.applies ++ b.applies ++ c.applies
@@ -280,7 +295,8 @@ partial def Expr.dataRefs : Expr → Array String
   | .binary _ lhs rhs => lhs.dataRefs ++ rhs.dataRefs
   | .not e => e.dataRefs
   | .ite c t f => c.dataRefs ++ t.dataRefs ++ f.dataRefs
-  | .urange _ e | .srange _ e | .natClip e | .sclip _ e => e.dataRefs
+  | .urange _ e | .srange _ e | .charRange e | .natClip e | .sclip _ e
+  | .charClip e => e.dataRefs
   | .seqLen e | .seqToMultiset e => e.dataRefs
   | .seqPush a b | .seqIndex a b | .seqNew a b | .seqAdd a b =>
     a.dataRefs ++ b.dataRefs
@@ -311,7 +327,8 @@ partial def Expr.collectTriggers : Expr → Array (Array (Array Expr))
   | .binary _ lhs rhs => lhs.collectTriggers ++ rhs.collectTriggers
   | .not e => e.collectTriggers
   | .ite c t f => c.collectTriggers ++ t.collectTriggers ++ f.collectTriggers
-  | .urange _ e | .srange _ e | .natClip e | .sclip _ e => e.collectTriggers
+  | .urange _ e | .srange _ e | .charRange e | .natClip e | .sclip _ e
+  | .charClip e => e.collectTriggers
   | .seqLen e | .seqToMultiset e => e.collectTriggers
   | .seqPush a b | .seqIndex a b | .seqNew a b | .seqAdd a b =>
     a.collectTriggers ++ b.collectTriggers
