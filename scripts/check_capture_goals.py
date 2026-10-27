@@ -98,15 +98,15 @@ def inspect(root: Path) -> list[str]:
                 raise ValueError("missing or escaping Lean source")
             content = file.read_text(encoding="utf-8")
             match = re.search(
-                rf"(?ms)^-- vrml:begin {re.escape(name)} {re.escape(statement_hash)}\\s*$\\n"
-                rf"(.*?)^-- vrml:end {re.escape(name)}\\s*$",
+                rf"(?ms)^-- vrml:begin {re.escape(name)} {re.escape(statement_hash)}\s*$\n"
+                rf"(.*?)^-- vrml:end {re.escape(name)}\s*$",
                 content,
             )
             if match is None:
                 raise ValueError("keyword capture statement/hash binding missing")
             body = match.group(1)
-            if (re.search(r"∀\\s*\\(end_vrml_\\d+\\s*:\\s*Int\\)", body)
-                    and re.search(r"end_vrml_\\d+\\s*<\\s*end_\\b", body)):
+            if (re.search(r"∀\s*\(end_vrml_\d+\s*:\s*Int\)", body)
+                    and re.search(r"end_vrml_\d+\s*<\s*end_\b", body)):
                 found = True
                 break
         if not found:
