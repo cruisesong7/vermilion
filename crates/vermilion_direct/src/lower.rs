@@ -1549,14 +1549,59 @@ fn reserve_nonbinder_names(
     });
 }
 
+/// The Lean renderer (`lean/Vermilion/Ir/Ast.lean:leanSegment`) escapes
+/// keywords and normalizes punctuation. Raw identifier freshness alone is
+/// insufficient: `end` and `end_` become the same Lean binder, allowing
+/// the source expression's free `end_` to be captured.
+fn rendered_binder_segment(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    let prefixed = if raw.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        format!("_{sanitized}")
+    } else {
+        sanitized
+    };
+    if prefixed.is_empty() {
+        return "_anonymous".to_owned();
+    }
+    // Keep this exact list aligned with leanReservedWords in Ast.lean.
+    const RESERVED: &[&str] = &[
+        "end", "by", "do", "from", "with", "then", "else", "show",
+        "have", "let", "fun", "match", "where", "calc", "at", "in",
+        "open", "section", "namespace", "variable", "example",
+        "theorem", "def", "deriving", "instance", "class", "structure",
+        "inductive", "abbrev", "axiom", "mutual", "macro", "notation",
+        "attribute", "if",
+    ];
+    if RESERVED.contains(&prefixed.as_str()) {
+        format!("{prefixed}_")
+    } else {
+        prefixed
+    }
+}
+
 fn capture_avoiding_binder_name(
     base: &str,
     taken: &mut std::collections::HashSet<String>,
 ) -> String {
-    if taken.insert(base.to_owned()) { return base.to_owned(); }
+    let occupied: std::collections::HashSet<String> =
+        taken.iter().map(|name| rendered_binder_segment(name)).collect();
+    let choose = |candidate: String, taken: &mut std::collections::HashSet<String>| {
+        if occupied.contains(&rendered_binder_segment(&candidate)) {
+            return None;
+        }
+        taken.insert(candidate.clone());
+        Some(candidate)
+    };
+    if let Some(name) = choose(base.to_owned(), taken) {
+        return name;
+    }
     for counter in 0u64.. {
-        let candidate = format!("{base}_vrml_{counter}");
-        if taken.insert(candidate.clone()) { return candidate; }
+        if let Some(name) = choose(format!("{base}_vrml_{counter}"), taken) {
+            return name;
+        }
     }
     unreachable!("unbounded fresh names exhausted")
 }
@@ -1593,6 +1638,26 @@ mod capture_avoiding_binder_tests {
         let mut occupied = HashSet::new();
         assert_eq!(capture_avoiding_binder_name("x", &mut occupied), "x");
         assert_eq!(capture_avoiding_binder_name("x", &mut occupied), "x_vrml_0");
+    }
+
+    #[test]
+    fn lean_keyword_escaping_does_not_capture_free_variable() {
+        let mut occupied = HashSet::from(["end_".to_owned()]);
+        assert_eq!(rendered_binder_segment("end"), "end_");
+        assert_eq!(capture_avoiding_binder_name("end", &mut occupied), "end_vrml_0");
+    }
+
+    #[test]
+    fn lean_name_normalization_does_not_capture() {
+        let mut occupied = HashSet::from([
+            "x-y".to_owned(), "x_vrml_0".to_owned(),
+        ]);
+        assert_eq!(rendered_binder_segment("x-y"), "x_y");
+        assert_eq!(capture_avoiding_binder_name("x_y", &mut occupied), "x_y");
+        let mut occupied = HashSet::from(["x-y".to_owned()]);
+        assert_eq!(capture_avoiding_binder_name("x_y", &mut occupied), "x_y_vrml_0");
+        assert_eq!(rendered_binder_segment("2k"), "_2k");
+        assert_eq!(rendered_binder_segment(""), "_anonymous");
     }
 
     #[test]
