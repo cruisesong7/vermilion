@@ -1467,8 +1467,14 @@ fn annotate_span(error: String, raw: &vir::messages::Span) -> String {
     )
 }
 
-// Capture-avoiding naming for VIR binders lowered under SST substitutions.
-// Reserve all names in substitutions, including nested binders and triggers.
+// Capture-avoiding naming for VIR binders lowered under SST substitutions
+// (issue #59). Names are exact strings here: a binder must not equal a name
+// free in the substitution image of anything its scope mentions. How names
+// RENDER (keyword escaping, punctuation) is the Lean side's concern — the
+// renderer keeps rendering injective per scope (`lean/Vermilion/Ir/Hygiene.lean`,
+// docs/vcgen.md `(HYGIENE)`), so no keyword list is mirrored here.
+
+/// Every variable name occurring in a lowered expression, bound or free.
 fn reserve_expr_names(expr: &Expr, taken: &mut std::collections::HashSet<String>) {
     match expr {
         Expr::Var(name) => { taken.insert(name.clone()); }
@@ -1520,87 +1526,152 @@ fn reserve_expr_names(expr: &Expr, taken: &mut std::collections::HashSet<String>
     }
 }
 
-/// Free names in substitution images and symbolic registry values must remain
-/// free below a quantifier, choose, or lambda binder.
-fn binding_occupied_names(ctx: ExpCtx<'_>, env: &Env) -> std::collections::HashSet<String> {
-    let mut taken = std::collections::HashSet::new();
-    for value in env.values() { reserve_expr_names(value, &mut taken); }
-    for value in ctx.registry.mut_futures.borrow().values() {
-        reserve_expr_names(value, &mut taken);
+/// Visit the identifiers FREE in `exp` given the enclosing `bound` stack —
+/// unlike `exp_visit_vars`, a nested binder's own variables are not
+/// reported (the outer environment never substitutes them).
+fn exp_visit_free_vars(
+    exp: &Exp,
+    bound: &mut Vec<VarIdent>,
+    visit: &mut dyn FnMut(&VarIdent),
+) {
+    match &exp.x {
+        ExpX::Var(ident) | ExpX::VarLoc(ident) | ExpX::VarAt(ident, _)
+        | ExpX::Old(_, ident) => {
+            if !bound.contains(ident) {
+                visit(ident);
+            }
+        }
+        ExpX::Const(_)
+        | ExpX::StaticVar(_)
+        | ExpX::NullaryOpr(_)
+        | ExpX::ExecFnByName(_)
+        | ExpX::FuelConst(_)
+        | ExpX::Interp(_) => {}
+        ExpX::Loc(inner)
+        | ExpX::Unary(_, inner)
+        | ExpX::UnaryOpr(_, inner)
+        | ExpX::WithTriggers(_, inner) => exp_visit_free_vars(inner, bound, visit),
+        ExpX::Binary(_, lhs, rhs) | ExpX::BinaryOpr(_, lhs, rhs) => {
+            exp_visit_free_vars(lhs, bound, visit);
+            exp_visit_free_vars(rhs, bound, visit);
+        }
+        ExpX::If(cond, then_exp, else_exp) => {
+            exp_visit_free_vars(cond, bound, visit);
+            exp_visit_free_vars(then_exp, bound, visit);
+            exp_visit_free_vars(else_exp, bound, visit);
+        }
+        ExpX::Call(_, _, args) => {
+            for arg in args.iter() {
+                exp_visit_free_vars(arg, bound, visit);
+            }
+        }
+        ExpX::CallLambda(callee, args) => {
+            exp_visit_free_vars(callee, bound, visit);
+            for arg in args.iter() {
+                exp_visit_free_vars(arg, bound, visit);
+            }
+        }
+        ExpX::Ctor(_, _, fields) => {
+            for field in fields.iter() {
+                exp_visit_free_vars(&field.a, bound, visit);
+            }
+        }
+        ExpX::ArrayLiteral(elements) => {
+            for element in elements.iter() {
+                exp_visit_free_vars(element, bound, visit);
+            }
+        }
+        ExpX::Bind(bnd, body) => {
+            let depth = bound.len();
+            match &bnd.x {
+                // Sequential: each value sees the binders before it.
+                vir::sst::BndX::Let(binders) => {
+                    for binder in binders.iter() {
+                        exp_visit_free_vars(&binder.a, bound, visit);
+                        bound.push(binder.name.clone());
+                    }
+                }
+                vir::sst::BndX::Quant(_, binders, trigs, _)
+                | vir::sst::BndX::Lambda(binders, trigs) => {
+                    bound.extend(binders.iter().map(|binder| binder.name.clone()));
+                    for group in trigs.iter() {
+                        for trigger in group.iter() {
+                            exp_visit_free_vars(trigger, bound, visit);
+                        }
+                    }
+                }
+                vir::sst::BndX::Choose(binders, trigs, cond) => {
+                    bound.extend(binders.iter().map(|binder| binder.name.clone()));
+                    for group in trigs.iter() {
+                        for trigger in group.iter() {
+                            exp_visit_free_vars(trigger, bound, visit);
+                        }
+                    }
+                    exp_visit_free_vars(cond, bound, visit);
+                }
+            }
+            exp_visit_free_vars(body, bound, visit);
+            bound.truncate(depth);
+        }
     }
+}
+
+/// The names a binder lowered over `scope` must stay clear of: for every
+/// identifier free in `scope` outside `bound`, the names of its lowered
+/// form — the substitution image when it (or its `&mut` alias root, which
+/// is what `ExpX::Var` lowering actually looks up) is in `env`, the resolved
+/// prophecy symbol when a future exists for it, the identifier itself
+/// otherwise — plus the symbols lowered calls reference by name without
+/// passing through `env` (closure contract predicates, trait-fn symbols).
+/// Nothing else: reserving unrelated environment entries would rename
+/// binders — and shift statement hashes, staling twin proofs — whenever an
+/// unrelated local elsewhere in the function changes.
+fn names_reserved_below<'a>(
+    ctx: ExpCtx<'_>,
+    env: &Env,
+    bound: &[VarIdent],
+    scope: impl IntoIterator<Item = &'a Exp>,
+) -> std::collections::HashSet<String> {
+    let mut taken = std::collections::HashSet::new();
     for name in ctx.registry.closure_preds.borrow().values() {
         taken.insert(name.clone());
     }
     for (_, (name, _)) in ctx.registry.trait_fn_symbols.borrow().iter() {
         taken.insert(name.clone());
     }
+    let mut stack: Vec<VarIdent> = bound.to_vec();
+    for exp in scope {
+        exp_visit_free_vars(exp, &mut stack, &mut |ident| {
+            let root = resolve_mut_root(&ctx.registry, ident);
+            for key in [ident, &root] {
+                match env.get(key) {
+                    Some(value) => reserve_expr_names(value, &mut taken),
+                    None => {
+                        taken.insert(key.0.to_string());
+                    }
+                }
+                if let Some(future) = ctx.registry.mut_futures.borrow().get(key) {
+                    reserve_expr_names(future, &mut taken);
+                }
+            }
+        });
+    }
     taken
 }
 
-fn reserve_nonbinder_names(
-    expr: &Exp,
-    bound: &[VarIdent],
-    taken: &mut std::collections::HashSet<String>,
-) {
-    exp_visit_vars(expr, &mut |ident| {
-        if !bound.iter().any(|binder| binder == ident) {
-            taken.insert(ident.0.to_string());
-        }
-    });
-}
-
-/// The Lean renderer (`lean/Vermilion/Ir/Ast.lean:leanSegment`) escapes
-/// keywords and normalizes punctuation. Raw identifier freshness alone is
-/// insufficient: `end` and `end_` become the same Lean binder, allowing
-/// the source expression's free `end_` to be captured.
-fn rendered_binder_segment(raw: &str) -> String {
-    let sanitized: String = raw
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
-        .collect();
-    let prefixed = if raw.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-        format!("_{sanitized}")
-    } else {
-        sanitized
-    };
-    if prefixed.is_empty() {
-        return "_anonymous".to_owned();
-    }
-    // Keep this exact list aligned with leanReservedWords in Ast.lean.
-    const RESERVED: &[&str] = &[
-        "end", "by", "do", "from", "with", "then", "else", "show",
-        "have", "let", "fun", "match", "where", "calc", "at", "in",
-        "open", "section", "namespace", "variable", "example",
-        "theorem", "def", "deriving", "instance", "class", "structure",
-        "inductive", "abbrev", "axiom", "mutual", "macro", "notation",
-        "attribute", "if",
-    ];
-    if RESERVED.contains(&prefixed.as_str()) {
-        format!("{prefixed}_")
-    } else {
-        prefixed
-    }
-}
-
+/// `base` when it is not taken, else the first free `base_vrml_<n>`; the
+/// chosen name joins `taken` so sibling binders stay distinct.
 fn capture_avoiding_binder_name(
     base: &str,
     taken: &mut std::collections::HashSet<String>,
 ) -> String {
-    let occupied: std::collections::HashSet<String> =
-        taken.iter().map(|name| rendered_binder_segment(name)).collect();
-    let choose = |candidate: String, taken: &mut std::collections::HashSet<String>| {
-        if occupied.contains(&rendered_binder_segment(&candidate)) {
-            return None;
-        }
-        taken.insert(candidate.clone());
-        Some(candidate)
-    };
-    if let Some(name) = choose(base.to_owned(), taken) {
-        return name;
+    if taken.insert(base.to_owned()) {
+        return base.to_owned();
     }
     for counter in 0u64.. {
-        if let Some(name) = choose(format!("{base}_vrml_{counter}"), taken) {
-            return name;
+        let candidate = format!("{base}_vrml_{counter}");
+        if taken.insert(candidate.clone()) {
+            return candidate;
         }
     }
     unreachable!("unbounded fresh names exhausted")
@@ -1640,24 +1711,13 @@ mod capture_avoiding_binder_tests {
         assert_eq!(capture_avoiding_binder_name("x", &mut occupied), "x_vrml_0");
     }
 
+    /// Exact names only: `end` and `end_` are different IR names. Their
+    /// identical Lean rendering is resolved by the renderer
+    /// (tests/render_hygiene.lean), not by mirroring its keyword list here.
     #[test]
-    fn lean_keyword_escaping_does_not_capture_free_variable() {
+    fn rendering_collisions_are_not_this_layers_concern() {
         let mut occupied = HashSet::from(["end_".to_owned()]);
-        assert_eq!(rendered_binder_segment("end"), "end_");
-        assert_eq!(capture_avoiding_binder_name("end", &mut occupied), "end_vrml_0");
-    }
-
-    #[test]
-    fn lean_name_normalization_does_not_capture() {
-        let mut occupied = HashSet::from([
-            "x-y".to_owned(), "x_vrml_0".to_owned(),
-        ]);
-        assert_eq!(rendered_binder_segment("x-y"), "x_y");
-        assert_eq!(capture_avoiding_binder_name("x_y", &mut occupied), "x_y_vrml_0");
-        let mut occupied = HashSet::from(["x-y".to_owned()]);
-        assert_eq!(capture_avoiding_binder_name("x_y", &mut occupied), "x_y_vrml_0");
-        assert_eq!(rendered_binder_segment("2k"), "_2k");
-        assert_eq!(rendered_binder_segment(""), "_anonymous");
+        assert_eq!(capture_avoiding_binder_name("end", &mut occupied), "end");
     }
 
     #[test]
@@ -2010,13 +2070,8 @@ fn lower_exp_impl(ctx: ExpCtx<'_>, env: &Env, exp: &Exp) -> Result<Expr, String>
                 let mut bound = Vec::new();
                 let mut guards = Vec::new();
                 let bound_ids: Vec<VarIdent> = binders.iter().map(|b| b.name.clone()).collect();
-                let mut taken = binding_occupied_names(ctx, env);
-                reserve_nonbinder_names(body, &bound_ids, &mut taken);
-                for group in trigs.iter() {
-                    for trigger in group.iter() {
-                        reserve_nonbinder_names(trigger, &bound_ids, &mut taken);
-                    }
-                }
+                let mut taken = names_reserved_below(ctx, env, &bound_ids,
+                    std::iter::once(body).chain(trigs.iter().flat_map(|group| group.iter())));
                 for binder in binders.iter() {
                     let base = capture_avoiding_binder_name(
                         &binder.name.0.to_string(), &mut taken,
@@ -2079,15 +2134,9 @@ fn lower_exp_impl(ctx: ExpCtx<'_>, env: &Env, exp: &Exp) -> Result<Expr, String>
                         "unsupported SST choose at non-scalar binder type {ty:?}"
                     ));
                 }
-                let mut taken = binding_occupied_names(ctx, env);
                 let bound_ids = [binder.name.clone()];
-                reserve_nonbinder_names(body, &bound_ids, &mut taken);
-                reserve_nonbinder_names(cond, &bound_ids, &mut taken);
-                for group in trigs.iter() {
-                    for trigger in group.iter() {
-                        reserve_nonbinder_names(trigger, &bound_ids, &mut taken);
-                    }
-                }
+                let mut taken = names_reserved_below(ctx, env, &bound_ids,
+                    [body, cond].into_iter().chain(trigs.iter().flat_map(|group| group.iter())));
                 let base = capture_avoiding_binder_name(
                     &binder.name.0.to_string(), &mut taken,
                 );
@@ -2130,8 +2179,7 @@ fn lower_exp_impl(ctx: ExpCtx<'_>, env: &Env, exp: &Exp) -> Result<Expr, String>
                 let mut extended = env.clone();
                 let mut bound = Vec::new();
                 let bound_ids: Vec<VarIdent> = binders.iter().map(|b| b.name.clone()).collect();
-                let mut taken = binding_occupied_names(ctx, env);
-                reserve_nonbinder_names(body, &bound_ids, &mut taken);
+                let mut taken = names_reserved_below(ctx, env, &bound_ids, std::iter::once(body));
                 for binder in binders.iter() {
                     let base = capture_avoiding_binder_name(
                         &binder.name.0.to_string(), &mut taken,

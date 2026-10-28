@@ -215,6 +215,14 @@ BINOP     ::= add | sub | mul | ediv | emod
 
 ## Semantics on the Lean side
 
+- Identifiers are exact strings. The Rust side guarantees that
+  substitution never captures (a binder lowered under the environment is
+  renamed `x_vrml_<n>` when its name is free in the lowered form of anything
+  its scope mentions) and that a function's theorem-level symbols are
+  pairwise distinct as strings. How names *render* is the Lean side's
+  concern alone: `leanSegment` is not injective (`end`/`end_`), so the
+  emitter α-renames before rendering (docs/vcgen.md, `(HYGIENE)`) rather
+  than having the serializer mirror Lean's keyword list.
 - `Int`-typed Verus values (all machine widths, `int`, `nat`) become Lean
   `Int` binders; range facts travel as explicit `urange`/`srange` hypotheses.
   VIR `Clip` expressions are preserved exactly: `int` is the identity;

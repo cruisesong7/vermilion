@@ -1,18 +1,16 @@
 name: Capture-avoiding lowering native regression
 
 on:
-  push:
-    branches:
-      - contrib/capture-avoidance-upstream-20261021
   pull_request:
     paths:
       - "crates/vermilion_direct/**"
       - "lean/Vermilion/**"
       - "scripts/differential_*.py"
       - "scripts/run_differential.py"
-      - "scripts/check_capture_goals.py"
+      - "scripts/test_render_hygiene.sh"
+      - "lean/VrmlGen.lean"
       - "tests/differential/**"
-      - "tests/test_capture_goal_guard.py"
+      - "tests/render_hygiene.lean"
       - "tests/test_differential_outcomes.py"
       - ".github/workflows/capture-avoidance-native.yml"
   workflow_dispatch:
@@ -34,9 +32,8 @@ jobs:
           persist-credentials: false
       - name: Verify regression guard behavior
         run: |
-          python3 -m py_compile scripts/differential_outcomes.py scripts/run_differential.py scripts/differential_soundness.py scripts/check_capture_goals.py
+          python3 -m py_compile scripts/differential_outcomes.py scripts/run_differential.py scripts/differential_soundness.py
           python3 -m unittest discover -s tests -p test_differential_outcomes.py -v
-          python3 -m unittest discover -s tests -p test_capture_goal_guard.py -v
       - name: Install native toolchain prerequisites
         run: |
           sudo apt-get update
@@ -68,13 +65,17 @@ jobs:
         run: |
           export PATH="$HOME/.cargo/bin:$HOME/.elan/bin:$PATH"
           ./scripts/build.sh
+      - name: Rendering hygiene contract (Lean unit checks + end-to-end)
+        run: |
+          export PATH="$HOME/.cargo/bin:$HOME/.elan/bin:$PATH"
+          ./scripts/test_render_hygiene.sh
       - name: Run binder lowering unit tests
         run: |
           export PATH="$HOME/.cargo/bin:$HOME/.elan/bin:$PATH"
           repository="$PWD"
           source scripts/verus_env.sh
           (cd crates/vermilion_direct && rustup run "$verus_toolchain" cargo test)
-      - name: Validate every differential case and generated capture-sensitive statement
+      - name: Validate every differential case in both emission modes
         run: |
           export PATH="$HOME/.cargo/bin:$HOME/.elan/bin:$PATH"
           mkdir -p .vermilion/capture-evidence
@@ -83,7 +84,6 @@ jobs:
             python3 scripts/run_differential.py --emit-mode "$mode"
             python3 scripts/differential_soundness.py \
               docs/reports/generated/differential-m1-results.md tests/differential
-            python3 scripts/check_capture_goals.py .
             cp docs/reports/generated/differential-m1-results.md \
               ".vermilion/capture-evidence/${mode}-report.md"
             tar -czf ".vermilion/capture-evidence/${mode}-goals.tar.gz" \
