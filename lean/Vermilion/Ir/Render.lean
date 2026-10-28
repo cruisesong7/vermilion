@@ -373,15 +373,22 @@ def SpecFn.needsAndGuardDecidable (specFn : SpecFn) : Bool :=
 measure: a measure mentions `Seq.len p` and a self-call passes a `subrange`
 for `p` (`count (prefix.subrange 1 prefix.len)`)? Only then does a
 termination goal measure the length of a subrange, which `omega` closes once
-`Seq.len`/`Seq.subrange` unfold to list lengths. -/
+`Seq.len`/`Seq.subrange` unfold to list lengths. Both operations are
+recognized in their structural and their registry (`vstdApply`) forms. -/
 def SpecFn.recursesOnSubrange (specFn : SpecFn) : Bool :=
+  let lengthOf (name : String) : Expr → Bool
+    | .seqLen (.var v) | .vstdApply _ "Vermilion.Seq.len" #[.var v] => v == name
+    | _ => false
+  let isSubrange : Expr → Bool
+    | .seqSubrange .. | .vstdApply _ "Vermilion.Seq.subrange" _ => true
+    | _ => false
   let measured := specFn.binders.filter fun binder =>
-    specFn.decreases.any (·.anySubterm (· == .seqLen (.var binder.name)))
+    specFn.decreases.any (·.anySubterm (lengthOf binder.name))
   !measured.isEmpty && specFn.body.anySubterm fun
     | .apply id _ args =>
       id.qualified == specFn.id.qualified &&
         (specFn.binders.zip args).any fun (binder, arg) =>
-          measured.contains binder && (arg matches .seqSubrange ..)
+          measured.contains binder && isSubrange arg
     | _ => false
 
 /-- The qualified names of the spec fns whose emitted definitions must be
