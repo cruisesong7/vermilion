@@ -10,6 +10,10 @@ set -euo pipefail
 repository="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repository"
 
+# The IR library (Mathlib-free, outside the default `lake build` target) is
+# what the unit file imports; the examples build it lazily through vrml_gen.
+lake build vrml_gen >/dev/null
+
 # The mechanism, on constructed obligations: binders move away from the
 # rendered names of their scope's free variables, telescope entries from
 # earlier entries, nothing else changes (hash stability), idempotent.
