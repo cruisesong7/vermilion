@@ -148,6 +148,63 @@ of all satisfying values and of `default` holds of the choice). Scalar
 range guards all contain `default = 0`, so no soundness question arises in
 either direction.
 
+### Rendering hygiene (the `(HYGIENE)` post-pass)
+
+Names in the IR are exact strings. Two well-formedness conditions are the
+lowering's (`vermilion_direct`) responsibility, and the rules above assume
+them:
+
+- **Substitution is capture-avoiding.** A quantifier, `choose` or lambda
+  binder lowered under a substitution environment never equals a name free
+  in the lowered form of anything its scope (body, condition, trigger
+  groups) mentions — the substitution image of an identifier in the
+  environment, the prophecy symbol of a `&mut` future, the identifier
+  itself otherwise (`names_reserved_below`, `capture_avoiding_binder_name`
+  in `lower.rs`; issue #59). Only names the scope actually reaches are
+  reserved, so unrelated locals never rename a binder (and never shift its
+  statement hash).
+- **Γ's names are pairwise distinct as strings** (`fresh_binder_name`).
+
+Rendering maps every name through `leanSegment` (keyword escaping,
+punctuation normalization), which is not injective: Rust `end` and `end_`
+both render as `end_`. Distinctness as strings therefore does not survive
+rendering. Rendered verbatim, a binder `end` over a free `end_` would bind
+both occurrences in the Lean text, and parameters `end` and `end_` would
+make the second shadow the first for every later hypothesis and the goal —
+`end = 1, end_ = 2 ⊢ end = 2` would become the vacuous
+`end_ = 1, end_ = 2 ⊢ end_ = 2`. The emitted theorem would not be the
+sequent.
+
+`(HYGIENE)` is the last post-pass over each emitted obligation
+(`Obligation.hygienic`, after `(CHOOSE)`): the α-equivalent sequent whose
+rendering is injective on every scope.
+
+```
+    hyg(Γ ; H ⊢ φ) = Γ' ; H' ⊢ φ'      with      Γ' ; H' ⊢ φ'  ≡α  Γ ; H ⊢ φ
+```
+
+- Inside every proposition, at every binder construct, a binder whose
+  rendered name equals the rendered name of a *different* variable free in
+  its scope (body and trigger groups), or of an earlier binder of the same
+  construct, is renamed and the new name substituted through the scope
+  (`Expr.hygienic`). Exact-name shadowing (`∀ i, ∀ i, …`) is Lean's own
+  shadowing and is left alone.
+- Along the telescope Θ · Γ · H in rendering order, a value binder whose
+  rendered name repeats an earlier entry's is renamed and substituted
+  through H and φ (the earlier entry — typically a parameter — keeps its
+  name); a hypothesis whose rendered name repeats one is renamed only
+  (hypothesis names are never referenced).
+- Fresh names are `x_1, x_2, …`, chosen to render outside every name
+  occurring in the obligation, so a rename can neither capture nor create
+  a collision. The pass is the identity on obligations without collisions
+  — statement hashes of ordinary programs are unaffected — and idempotent.
+
+`vrml_gen` re-checks the property on every obligation it emits
+(`Obligation.hygieneViolations`) and fails closed, so a regression in
+either layer cannot reach `generated/`. Unit checks of the mechanism:
+`tests/render_hygiene.lean`; end to end: the `c_hygiene_*` differential
+cases and `scripts/test_render_hygiene.sh`.
+
 ### Typeclass-evidence obligations
 
 Lean terms can demand class dictionaries that Verus leaves implicit in an
@@ -675,7 +732,13 @@ the target theorems are:
    declaration is either synthesized constructively from the explicit
    telescope or appears in `E(O)` and is kernel-checked in the final twin. An
    unresolved placeholder can never contribute to a verified result.
-4. **Coherence (differential).** The mechanized policy keeps the differential
+4. **Rendering is α-renaming.** `hyg` (the `(HYGIENE)` post-pass) yields an
+   α-equivalent sequent, and the rendered Lean theorem is that sequent under
+   an injective naming — so the emitted text proves exactly `∀ Θ, ∀ Γ_σ,
+   (⋀ H_σ) → φ` and nothing weaker. Together with the lowering's
+   capture-free substitution this is the whole naming trust: nothing else
+   about identifiers is assumed.
+5. **Coherence (differential).** The mechanized policy keeps the differential
    parity the `tests/differential/` corpus measures: same accept/reject
    verdict as Verus, including the `reveal`/`hide`/fuel behavior encoded in V.
 
@@ -695,6 +758,9 @@ complete than trigger-disciplined SMT).
 | evidence closure `E(O)` | `EvidenceTarget`, `EvidenceObligation`, `collectEvidenceObligations` |
 | class target → local Lean instance | `renderEvidenceObligation` in `lean/Vermilion/Ir/Render.lean` |
 | sequent → Lean theorem | `renderObligation` in `lean/Vermilion/Ir/Render.lean` |
+| `(HYGIENE)` post-pass `hyg` | `Obligation.hygienic` in `Vcgen.lean`; `Expr.hygienic`, `hygienicBinders`, `freshRendered` in `lean/Vermilion/Ir/Hygiene.lean` |
+| fail-closed hygiene check | `Obligation.hygieneViolations`, enforced in `lean/VrmlGen.lean` |
+| capture-free substitution (lowering) | `names_reserved_below`, `capture_avoiding_binder_name` in `crates/vermilion_direct/src/lower.rs` |
 | recursive ground normalization | bounded rewrite block in `renderObligation` |
 | statement / expression grammar | `docs/ir.md`, `lean/Vermilion/Ir/Ast.lean` |
 

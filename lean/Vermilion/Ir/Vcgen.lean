@@ -1,5 +1,6 @@
 import Vermilion.Ir.Ast
 import Vermilion.Ir.Naming
+import Vermilion.Ir.Hygiene
 import Vermilion.Vstd.Registry
 
 /-!
@@ -461,6 +462,75 @@ private def withChooseFacts (obligation : Obligation) : Obligation :=
   else { obligation with
     hypotheses := (distinct.mapIdx chooseHypothesis) ++ obligation.hypotheses }
 
+/-- The `(HYGIENE)` post-pass (docs/vcgen.md): the α-equivalent obligation
+whose rendering is injective on every scope. Quantifier/choose/lambda
+binders are renamed by `Expr.hygienic`; then the telescope
+`Θ · Γ · H` is walked in rendering order and every value binder whose
+rendered name repeats an earlier entry's is renamed — substituted through
+`H` and the goal — and every hypothesis whose rendered name repeats one is
+renamed (hypothesis names are never referenced). Fresh names render outside
+every name occurring in the obligation, so no rename captures or collides.
+Identity on obligations without collisions; idempotent. -/
+def Obligation.hygienic (obligation : Obligation) : Obligation := Id.run do
+  let hypotheses := obligation.hypotheses.map fun hypothesis =>
+    { hypothesis with proposition := hypothesis.proposition.hygienic }
+  let goal := obligation.goal.hygienic
+  let occurring :=
+    (obligation.typeParams ++ obligation.binders.map (·.name) ++ hypotheses.map (·.name) ++
+      hypotheses.foldl (fun acc h => acc ++ h.proposition.names) goal.names).map leanSegment
+  let mut used := obligation.typeParams.map leanSegment
+  let mut binders : Array Binder := #[]
+  let mut hypotheses := hypotheses
+  let mut goal := goal
+  for i in [0:obligation.binders.size] do
+    let binder := obligation.binders[i]!
+    let rendered := leanSegment binder.name
+    if used.contains rendered then
+      let fresh := freshRendered binder.name (used ++ occurring)
+      -- A binder repeated verbatim later in Γ binds nothing here.
+      let dead := (obligation.binders.extract (i + 1) obligation.binders.size).any
+        (·.name == binder.name)
+      unless dead do
+        hypotheses := hypotheses.map fun hypothesis =>
+          { hypothesis with
+            proposition := hypothesis.proposition.renameFree binder.name fresh }
+        goal := goal.renameFree binder.name fresh
+      binders := binders.push { binder with name := fresh }
+      used := used.push (leanSegment fresh)
+    else
+      binders := binders.push binder
+      used := used.push rendered
+  let mut named : Array Hypothesis := #[]
+  for hypothesis in hypotheses do
+    let rendered := leanSegment hypothesis.name
+    if used.contains rendered then
+      let fresh := freshRendered hypothesis.name (used ++ occurring)
+      named := named.push { hypothesis with name := fresh }
+      used := used.push (leanSegment fresh)
+    else
+      named := named.push hypothesis
+      used := used.push rendered
+  return { obligation with binders, hypotheses := named, goal }
+
+/-- Rendering collisions in an obligation: telescope entries rendering
+identically, or a captured free variable inside some proposition. Empty for
+every obligation `generateObligations` returns; `vrml_gen` fails closed
+otherwise, so a hygiene regression can never emit a mis-scoped theorem. -/
+def Obligation.hygieneViolations (obligation : Obligation) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut seen : Array (String × String) := #[]
+  let entries := obligation.typeParams.map (fun p => (p, "type parameter")) ++
+    obligation.binders.map (fun b => (b.name, "binder")) ++
+    obligation.hypotheses.map (fun h => (h.name, "hypothesis"))
+  for (name, role) in entries do
+    for (earlier, earlierRole) in seen do
+      if leanSegment earlier == leanSegment name then
+        out := out.push s!"{earlierRole} `{earlier}` and {role} `{name}` both render as `{leanSegment name}`"
+    seen := seen.push (name, role)
+  for hypothesis in obligation.hypotheses do
+    out := out ++ hypothesis.proposition.hygieneViolations.map (s!"{hypothesis.name}: " ++ ·)
+  return out ++ obligation.goal.hygieneViolations
+
 /-- Generate VCs from a normalized, SSA-like statement list. `specFns`
 seeds the reveal-visibility defaults (ordinary spec fns visible, opaque
 ones hidden until a `reveal`). -/
@@ -473,6 +543,7 @@ def generateObligations (specFns : Array SpecFn) (function : FunctionView) :
     visibility := specFns.toList.map fun specFn =>
       (specFn.id.qualified, if specFn.visible then 1 else 0)
   }
-  ((processStmts function state function.body).obligations).map withChooseFacts
+  ((processStmts function state function.body).obligations).map
+    (Obligation.hygienic ∘ withChooseFacts)
 
 end Vermilion.Ir
