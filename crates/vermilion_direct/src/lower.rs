@@ -1499,7 +1499,8 @@ fn reserve_expr_names(expr: &Expr, taken: &mut std::collections::HashSet<String>
             reserve_expr_names(b, taken);
         }
         Expr::Not(a) | Expr::URange(_, a) | Expr::SRange(_, a)
-        | Expr::NatClip(a) | Expr::SignedClip(_, a) | Expr::SeqLen(a)
+        | Expr::CharRange(a) | Expr::NatClip(a) | Expr::SignedClip(_, a)
+        | Expr::CharClip(a) | Expr::SeqLen(a)
         | Expr::SeqToMultiset(a) | Expr::FieldOf(_, _, _, a)
         | Expr::IsVariant(_, _, a) => reserve_expr_names(a, taken),
         Expr::Ite(a, b, c) | Expr::SeqUpdate(a, b, c)
