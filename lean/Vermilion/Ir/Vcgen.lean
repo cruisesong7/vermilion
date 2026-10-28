@@ -138,19 +138,22 @@ PRECEDE the evidence — renders an affected definition with
 `open Classical in` and `noncomputable` instead (dalek-lite DL8:
 `iteP (is_negative a) …` in a spec-fn body).
 
-With `andGuards`, a conjunction whose left operand is not constructively
-decidable counts too: recursive spec-fn bodies render Verus's short-circuit
-`a && b` as the dependent `if _h : a then b else False`, which needs
-`Decidable a` (`SpecFn.needsAndGuardDecidable`). -/
+With `andGuards := some f` (`f` the recursive spec fn being defined), a
+conjunction whose right operand calls `f` and whose left operand is not
+constructively decidable counts too: recursive spec-fn bodies render such a
+short-circuit `a && b` as the dependent `if _h : a then b else False`, which
+needs `Decidable a` (`Expr.callsSelf`, `SpecFn.needsAndGuardDecidable`). -/
 partial def Expr.needsDecidableEvidence
-    (propVariables : List String) (andGuards : Bool := false) : Expr → Bool
+    (propVariables : List String) (andGuards : Option String := none) :
+    Expr → Bool
   | .ite condition thenValue elseValue =>
     !condition.constructivelyDecidable propVariables ||
       condition.needsDecidableEvidence propVariables andGuards ||
       thenValue.needsDecidableEvidence propVariables andGuards ||
       elseValue.needsDecidableEvidence propVariables andGuards
   | .binary op lhs rhs =>
-    (andGuards && op == .and && !lhs.constructivelyDecidable propVariables) ||
+    (op == .and && rhs.callsSelf andGuards &&
+        !lhs.constructivelyDecidable propVariables) ||
       lhs.needsDecidableEvidence propVariables andGuards ||
       rhs.needsDecidableEvidence propVariables andGuards
   | .not value => value.needsDecidableEvidence propVariables andGuards

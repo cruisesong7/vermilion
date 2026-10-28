@@ -33,11 +33,12 @@ private def BinOp.leanSymbol : BinOp → Option String
 mutual
 
 /-- Render an expression. Self-delimiting forms come out wrapped in
-parentheses; atoms come out bare. `dite` switches spec-level conditionals
+parentheses; atoms come out bare. `dite` (the qualified name of the
+recursive spec function being defined) switches spec-level conditionals
 from `Vermilion.iteP` to dependent `if _h : c then … else …` — used only
 inside recursive spec-function bodies, where the equation compiler needs
 the branch hypothesis for the termination goals. -/
-partial def Expr.renderD (dite : Bool) : Expr → String
+partial def Expr.renderD (dite : Option String) : Expr → String
   | .var name => leanSegment name
   | .int value => if value < 0 then s!"({value})" else s!"{value}"
   | .tt => "True"
@@ -60,11 +61,12 @@ partial def Expr.renderD (dite : Bool) : Expr → String
   | .binary .niff lhs rhs =>
     s!"({lhs.renderD dite} ↔ ¬ {rhs.renderD dite})"
   | .binary .and lhs rhs =>
-    if dite then
-      -- Verus conjunction is short-circuiting. Preserve that control-flow
-      -- shape in recursive definitions so Lean's equation compiler sees
-      -- the left-hand guard while checking recursive calls in the right.
-      -- Propositionally this remains exactly `lhs ∧ rhs`.
+    if rhs.callsSelf dite then
+      -- Verus conjunction is short-circuiting. When the right operand makes
+      -- a recursive call, preserve that control-flow shape so Lean's
+      -- equation compiler sees the left-hand guard while checking it.
+      -- Propositionally this remains exactly `lhs ∧ rhs`; any other
+      -- conjunction keeps its plain rendering.
       s!"(if _h : {lhs.renderD dite} then {rhs.renderD dite} else False)"
     else
       s!"({lhs.renderD dite} ∧ {rhs.renderD dite})"
@@ -73,7 +75,7 @@ partial def Expr.renderD (dite : Bool) : Expr → String
     s!"({lhs.renderD dite} {symbol} {rhs.renderD dite})"
   | .not e => s!"(¬ {e.renderD dite})"
   | .ite cond thenValue elseValue =>
-    if dite then
+    if dite.isSome then
       s!"(if _h : {cond.renderD dite} then {thenValue.renderD dite} \
 else {elseValue.renderD dite})"
     else
@@ -162,7 +164,7 @@ else {elseValue.renderD dite})"
 
 /-- Render an expression in argument position: parenthesized unless it is
 already self-delimiting. -/
-partial def Expr.renderAtomD (dite : Bool) (e : Expr) : String :=
+partial def Expr.renderAtomD (dite : Option String) (e : Expr) : String :=
   match e with
   | .var _ | .tt | .ff => e.renderD dite
   | .strLit _ => s!"({e.renderD dite})"
@@ -191,9 +193,9 @@ partial def Expr.renderAtomD (dite : Bool) (e : Expr) : String :=
 end
 
 /-- Statement/goal rendering (the iteP form). -/
-def Expr.render (e : Expr) : String := e.renderD false
+def Expr.render (e : Expr) : String := e.renderD none
 
-def Expr.renderAtom (e : Expr) : String := e.renderAtomD false
+def Expr.renderAtom (e : Expr) : String := e.renderAtomD none
 
 /-- Top-level rendering for hypotheses/goals: like `render`, but without the
 outermost parentheses on binary forms, matching the M1 output style. -/
@@ -207,8 +209,9 @@ def Expr.renderTop (e : Expr) : String :=
   | other => other.render
 
 /-- Recursive spec-function body rendering: dependent conditionals so the
-equation compiler sees the branch hypotheses in termination goals. -/
-def Expr.renderBody (e : Expr) : String := e.renderD true
+equation compiler sees the branch hypotheses in termination goals. `self`
+is the qualified name of the function being defined. -/
+def Expr.renderBody (self : String) (e : Expr) : String := e.renderD (some self)
 
 /-- Does this expression force `noncomputable` on a definition containing
 it? Only a possibly-zero (`non-literal`) `ediv`/`emod` does now: it keeps
@@ -241,30 +244,6 @@ partial def Expr.needsClassical : Expr → Bool
   -- `chooseSpec` is Hilbert choice: classical by construction.
   | .choose .. => true
   | _ => false
-
-/-- Qualified names of the spec fns an expression applies (pre-order). -/
-partial def Expr.applies : Expr → Array String
-  | .apply id _ args =>
-    args.foldl (fun acc arg => acc ++ arg.applies) #[id.qualified]
-  | .quant _ _ _ body => body.applies
-  | .lambda _ body => body.applies
-  | .choose _ _ body => body.applies
-  | .callFn callee args =>
-    args.foldl (fun acc arg => acc ++ arg.applies) callee.applies
-  | .binary _ lhs rhs => lhs.applies ++ rhs.applies
-  | .not e => e.applies
-  | .ite c t f => c.applies ++ t.applies ++ f.applies
-  | .urange _ e | .srange _ e | .charRange e | .natClip e | .sclip _ e
-  | .charClip e => e.applies
-  | .seqLen e | .seqToMultiset e => e.applies
-  | .seqPush a b | .seqIndex a b | .seqNew a b | .seqAdd a b => a.applies ++ b.applies
-  | .seqUpdate a b c | .seqSubrange a b c => a.applies ++ b.applies ++ c.applies
-  | .vstdApply _ _ args => args.foldl (fun acc arg => acc ++ arg.applies) #[]
-  | .bitOp _ _ _ a b => a.applies ++ b.applies
-  | .coll _ args | .ctor _ _ _ args =>
-    args.foldl (fun acc arg => acc ++ arg.applies) #[]
-  | .fieldOf _ _ _ e | .isVariant _ _ e => e.applies
-  | _ => #[]
 
 /-- Qualified names of the user datatypes a type mentions (pre-order). -/
 partial def Ty.dataRefs : Ty → Array String

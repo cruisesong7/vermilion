@@ -356,8 +356,9 @@ def SpecFn.needsPropDecidable (specFn : SpecFn) : Bool :=
   specFn.body.needsDecidableEvidence propVariables
 
 /-- Does this recursive spec fn's body contain a short-circuit `a && b` whose
-guard `a` is not constructively decidable? Recursive bodies render it as the
-dependent `if _h : a then b else False`, which needs `Decidable a`, so such a
+`b` calls the fn itself and whose guard `a` is not constructively decidable?
+Recursive bodies render exactly those conjunctions as the dependent
+`if _h : a then b else False`, which needs `Decidable a`, so such a
 definition is rendered under `open Classical in`. It does not go
 `noncomputable`: the conjunction is a Prop, erased by the compiler, and an
 `iteP` that branches on it is already caught by `needsPropDecidable`. -/
@@ -365,7 +366,8 @@ def SpecFn.needsAndGuardDecidable (specFn : SpecFn) : Bool :=
   let propVariables := specFn.binders.foldl (fun names binder =>
     if binder.ty == .prop then binder.name :: names else names) []
   specFn.isRecursive &&
-    specFn.body.needsDecidableEvidence propVariables (andGuards := true)
+    specFn.body.needsDecidableEvidence propVariables
+      (andGuards := some specFn.id.qualified)
 
 /-- The qualified names of the spec fns whose emitted definitions must be
 `noncomputable`: uninterpreted ones (rendered `opaque`), bodies that are
@@ -416,8 +418,8 @@ def renderSpecFn (specFn : SpecFn) (forceClassical : Bool := false) :
   -- `iteP (is_negative a) …`) additionally needs the classical fallback
   -- instance in scope: `open Classical in` before the definition, and the
   -- definition goes `noncomputable`. Recursive definitions render
-  -- their conditionals and short-circuit `&&` dependently
-  -- (`if _h : c then …`) so the equation compiler sees the branch
+  -- their conditionals, and each short-circuit `&&` guarding a self-call,
+  -- dependently (`if _h : c then …`) so the equation compiler sees the branch
   -- hypotheses in the termination goals, with `termination_by` from the
   -- Verus-checked decreases measures. A `&&` guard that `Decidable`
   -- synthesis cannot see through gets `open Classical in` as well, without
@@ -469,7 +471,9 @@ def renderSpecFn (specFn : SpecFn) (forceClassical : Bool := false) :
     out := out ++ s!" \{{leanSegment param} : Type} [Inhabited {leanSegment param}]"
   for binder in specFn.binders do
     out := out ++ s!" ({leanSegment binder.name} : {binder.ty.render})"
-  let body := if recursive then specFn.body.renderBody else specFn.body.renderTop
+  let body :=
+    if recursive then specFn.body.renderBody specFn.id.qualified
+    else specFn.body.renderTop
   -- A recursive definition must terminate on ALL Int inputs, but a
   -- Verus nat/machine-typed parameter's range is a typing fact our Int
   -- embedding does not carry into the binder types. Guard the body on the

@@ -22,8 +22,10 @@ range fact, and a `&&` guard was invisible to Lean's termination check.
   axioms without adding an axiom. A `grind_pattern` triggers the range fact on
   `charClip x`, as Verus's axiom triggers on `char_clip i`.
 - **`&&` in recursive spec fns** renders as `if _h : a then b else False`
-  (propositionally `a ∧ b`) so the equation compiler sees `a` while checking
-  recursive calls in `b`. Only definitions whose guard is not constructively
+  (propositionally `a ∧ b`) when `b` calls the definition itself, so the
+  equation compiler sees `a` while checking that call. Every other
+  conjunction keeps its plain `a ∧ b` rendering, so existing definitions emit
+  unchanged. Only definitions whose rewritten guard is not constructively
   decidable get `open Classical in` (#25); they stay computable.
 - **Suffix recursion.** A `decreasing_by` step unfolds `Seq.len`/`subrange`
   to list lengths, so recursion on `xs.subrange i xs.len` terminates by
