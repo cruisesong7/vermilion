@@ -182,6 +182,14 @@ private def processIrFile (mode : Option EmissionMode)
     | .ok document => pure document
     | .error message => throw (IO.userError s!"{path}: {message}")
   let groups := groupBySourceFile document.specFns document.functions
+  -- Fail closed on a rendering-hygiene regression (docs/vcgen.md,
+  -- `(HYGIENE)`): a mis-scoped theorem must never reach `generated/`.
+  for (rustFile, _, obligations) in groups do
+    for obligation in obligations do
+      let violations := obligation.hygieneViolations
+      unless violations.isEmpty do
+        throw (IO.userError s!"{rustFile}: internal error: rendering hygiene \
+violated in {obligation.qualifiedName}: {String.intercalate "; " violations.toList}")
   -- Stems that collide across source files (e.g. `field_lemmas/mul_lemmas.rs`
   -- and `common_lemmas/mul_lemmas.rs`). Under a shared `--generated-root`
   -- every file's artifacts land in ONE directory, so a colliding stem must

@@ -2,6 +2,7 @@ import Vermilion.Ir.Sexp
 import Vermilion.Ir.Ast
 import Vermilion.Ir.Decode
 import Vermilion.Ir.Naming
+import Vermilion.Ir.Hygiene
 import Vermilion.Ir.Print
 import Vermilion.Ir.Vcgen
 import Vermilion.Ir.Render

@@ -1,0 +1,101 @@
+name: Capture-avoiding lowering native regression
+
+on:
+  pull_request:
+    paths:
+      - "crates/vermilion_direct/**"
+      - "lean/Vermilion/**"
+      - "scripts/differential_*.py"
+      - "scripts/run_differential.py"
+      - "scripts/test_render_hygiene.sh"
+      - "lean/VrmlGen.lean"
+      - "tests/differential/**"
+      - "tests/render_hygiene.lean"
+      - "tests/test_differential_outcomes.py"
+      - ".github/workflows/capture-avoidance-native.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capture-lowering-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify regression guard behavior
+        run: |
+          python3 -m py_compile scripts/differential_outcomes.py scripts/run_differential.py scripts/differential_soundness.py
+          python3 -m unittest discover -s tests -p test_differential_outcomes.py -v
+      - name: Install native toolchain prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld libc++-dev libc++abi-dev libgmp-dev \
+            cmake ninja-build pkg-config libssl-dev curl unzip zstd git
+          if ! command -v elan >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -fsSL \
+              https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | \
+              sh -s -- -y --default-toolchain none
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Restore pinned native toolchain cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            ~/.cache/vermilion/verus
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.rustup/toolchains
+            ~/.elan/toolchains
+            .lake
+            target
+            crates/vermilion_direct/target
+          key: native-v3-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json', 'Cargo.lock', 'crates/vermilion_direct/Cargo.lock', 'scripts/setup_verus.sh', 'crates/vermilion_direct/src/lower.rs') }}
+          restore-keys: |
+            native-v3-${{ runner.os }}-
+      - name: Build pinned Verus, Rust, and Lean toolchain
+        run: |
+          export PATH="$HOME/.cargo/bin:$HOME/.elan/bin:$PATH"
+          ./scripts/build.sh
+      - name: Rendering hygiene contract (Lean unit checks + end-to-end)
+        run: |
+          export PATH="$HOME/.cargo/bin:$HOME/.elan/bin:$PATH"
+          ./scripts/test_render_hygiene.sh
+      - name: Run binder lowering unit tests
+        run: |
+          export PATH="$HOME/.cargo/bin:$HOME/.elan/bin:$PATH"
+          repository="$PWD"
+          source scripts/verus_env.sh
+          (cd crates/vermilion_direct && rustup run "$verus_toolchain" cargo test)
+      - name: Validate every differential case in both emission modes
+        run: |
+          export PATH="$HOME/.cargo/bin:$HOME/.elan/bin:$PATH"
+          mkdir -p .vermilion/capture-evidence
+          for mode in per-function per-file; do
+            rm -f .vermilion/differential-cache.json
+            python3 scripts/run_differential.py --emit-mode "$mode"
+            python3 scripts/differential_soundness.py \
+              docs/reports/generated/differential-m1-results.md tests/differential
+            cp docs/reports/generated/differential-m1-results.md \
+              ".vermilion/capture-evidence/${mode}-report.md"
+            tar -czf ".vermilion/capture-evidence/${mode}-goals.tar.gz" \
+              -C tests/differential generated
+          done
+          (cd .vermilion/capture-evidence &&
+            sha256sum *.md *.tar.gz > SHA256SUMS)
+      - name: Preserve emitted Lean evidence independently for both modes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: capture-avoidance-upstream-evidence
+          path: .vermilion/capture-evidence/
+          if-no-files-found: warn
+          retention-days: 14
