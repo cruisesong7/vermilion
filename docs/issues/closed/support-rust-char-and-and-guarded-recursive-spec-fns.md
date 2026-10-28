@@ -29,7 +29,9 @@ range fact, and a `&&` guard was invisible to Lean's termination check.
   decidable get `open Classical in` (#25); they stay computable.
 - **Suffix recursion.** A `decreasing_by` step unfolds `Seq.len`/`subrange`
   to list lengths, so recursion on `xs.subrange i xs.len` terminates by
-  `omega`.
+  `omega`. It is emitted only when a measure mentions `Seq.len p` and a
+  self-call passes a `subrange` for `p`; every other definition keeps its
+  previous tactic list.
 - Lean fixity keywords (`prefix`, `infix`, `infixl`, `infixr`, `postfix`)
   are escaped as binder names.
 

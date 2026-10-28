@@ -261,6 +261,23 @@ needs `Decidable lhs` (`Expr.needsDecidableEvidence`'s `andGuards`). -/
 def Expr.callsSelf (self : Option String) (e : Expr) : Bool :=
   self.any (e.applies.contains ·)
 
+/-- Does `e` or any of its subterms satisfy `p`? Trigger groups are
+metadata and are not searched, as in `Expr.applies`. -/
+partial def Expr.anySubterm (p : Expr → Bool) (e : Expr) : Bool :=
+  p e || match e with
+  | .binary _ a b | .seqPush a b | .seqIndex a b | .seqAdd a b | .seqNew a b
+  | .bitOp _ _ _ a b => a.anySubterm p || b.anySubterm p
+  | .ite a b c | .seqUpdate a b c | .seqSubrange a b c =>
+    a.anySubterm p || b.anySubterm p || c.anySubterm p
+  | .not a | .urange _ a | .srange _ a | .charRange a | .natClip a | .sclip _ a
+  | .charClip a | .seqLen a | .seqToMultiset a | .fieldOf _ _ _ a
+  | .isVariant _ _ a | .quant _ _ _ a | .lambda _ a | .choose _ _ a =>
+    a.anySubterm p
+  | .vstdApply _ _ args | .coll _ args | .apply _ _ args | .ctor _ _ _ args =>
+    args.any (·.anySubterm p)
+  | .callFn callee args => callee.anySubterm p || args.any (·.anySubterm p)
+  | _ => false
+
 structure Span where
   file : String
   startLine : Nat

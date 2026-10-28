@@ -369,6 +369,21 @@ def SpecFn.needsAndGuardDecidable (specFn : SpecFn) : Bool :=
     specFn.body.needsDecidableEvidence propVariables
       (andGuards := some specFn.id.qualified)
 
+/-- Does this recursive spec fn recurse on a `subrange` along a `Seq.len`
+measure: a measure mentions `Seq.len p` and a self-call passes a `subrange`
+for `p` (`count (prefix.subrange 1 prefix.len)`)? Only then does a
+termination goal measure the length of a subrange, which `omega` closes once
+`Seq.len`/`Seq.subrange` unfold to list lengths. -/
+def SpecFn.recursesOnSubrange (specFn : SpecFn) : Bool :=
+  let measured := specFn.binders.filter fun binder =>
+    specFn.decreases.any (·.anySubterm (· == .seqLen (.var binder.name)))
+  !measured.isEmpty && specFn.body.anySubterm fun
+    | .apply id _ args =>
+      id.qualified == specFn.id.qualified &&
+        (specFn.binders.zip args).any fun (binder, arg) =>
+          measured.contains binder && (arg matches .seqSubrange ..)
+    | _ => false
+
 /-- The qualified names of the spec fns whose emitted definitions must be
 `noncomputable`: uninterpreted ones (rendered `opaque`), bodies that are
 classical themselves (`chooseSpec`, possibly-zero `ediv`/`emod`), and —
@@ -508,12 +523,18 @@ def renderSpecFn (specFn : SpecFn) (forceClassical : Bool := false) :
     -- `Int.emod_lt_of_pos` — `omega` cannot bound `a % b` by a VARIABLE
     -- `b`; and a `natClip`ped measure (`binomial (natClip (n-1)) …`)
     -- surfaces an `iteP` the ladder splits before finishing with `omega`.
+    -- Recursion on a `subrange` along a `Seq.len` measure additionally
+    -- unfolds both to list lengths (`recursesOnSubrange`); every other
+    -- definition keeps the list without that rung.
+    let subrangeRung :=
+      if specFn.recursesOnSubrange then
+        "(simp only [Vermilion.Seq.len, Vermilion.Seq.subrange, \
+List.length_take, List.length_drop] at *; omega) | "
+      else ""
     out := out ++
       "decreasing_by all_goals first | omega | (simp_all; omega) | \
-(simp_all; exact ⟨Int.emod_lt_of_pos _ (by omega), by omega⟩) | \
-(simp only [Vermilion.Seq.len, Vermilion.Seq.subrange, List.length_take, \
-List.length_drop] at *; omega) | \
-(simp_all [Vermilion.iteP]; split_ifs <;> omega) | simp_all\n"
+(simp_all; exact ⟨Int.emod_lt_of_pos _ (by omega), by omega⟩) | " ++
+      subrangeRung ++ "(simp_all [Vermilion.iteP]; split_ifs <;> omega) | simp_all\n"
   return out
 
 /-- Header of every generated module: imports plus linter silencing.
